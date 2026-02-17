@@ -1,4 +1,3 @@
-require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
 
@@ -9,10 +8,9 @@ if (!process.env.STRIPE_SECRET_KEY) {
     process.exit(1);
 }
 
-console.log('Stripe key found:', process.env.STRIPE_SECRET_KEY.substring(0, 10) + '...');
+console.log('Stripe key found:', process.env.STRIPE_SECRET_KEY.substring(0, 15) + '...');
 
 const stripe = require('stripe')(process.env.STRIPE_SECRET_KEY);
-```
 
 const app = express();
 
