@@ -1,7 +1,18 @@
 require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
+
+// Check if Stripe key exists
+if (!process.env.STRIPE_SECRET_KEY) {
+    console.error('STRIPE_SECRET_KEY not found!');
+    console.error('Available env vars:', Object.keys(process.env));
+    process.exit(1);
+}
+
+console.log('Stripe key found:', process.env.STRIPE_SECRET_KEY.substring(0, 10) + '...');
+
 const stripe = require('stripe')(process.env.STRIPE_SECRET_KEY);
+```
 
 const app = express();
 
