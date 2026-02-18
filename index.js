@@ -110,7 +110,7 @@ app.post('/create-portal-session', async (req, res) => {
 });
 
 // Stripe webhook - called when payment succeeds
-app.post('/webhook', express.raw({ type: 'application/json' }), (req, res) => {
+app.post('/webhook', express.raw({ type: 'application/json' }), async (req, res) => {
     const sig = req.headers['stripe-signature'];
     let event;
     
@@ -127,25 +127,37 @@ app.post('/webhook', express.raw({ type: 'application/json' }), (req, res) => {
     
     console.log('Webhook event:', event.type);
     
-    // Payment succeeded - upgrade user to Pro
+    // Payment succeeded - upgrade user to Pro and save customer ID
     if (event.type === 'checkout.session.completed') {
         const session = event.data.object;
         const userId = session.client_reference_id;
+        const customerId = session.customer;
         
-        if (userId) {
+        if (userId && customerId) {
             proUsers.add(userId);
+            // Store mapping of userId to customerId
+            if (!global.customerMap) global.customerMap = new Map();
+            global.customerMap.set(userId, customerId);
+            
             console.log('User upgraded to Pro:', userId);
+            console.log('Customer ID saved:', customerId);
         }
     }
     
     // Subscription cancelled - downgrade user
     if (event.type === 'customer.subscription.deleted') {
         const subscription = event.data.object;
-        const userId = subscription.metadata?.userId;
+        const customerId = subscription.customer;
         
-        if (userId) {
-            proUsers.delete(userId);
-            console.log('User downgraded from Pro:', userId);
+        // Find userId by customerId
+        if (global.customerMap) {
+            for (let [userId, cId] of global.customerMap.entries()) {
+                if (cId === customerId) {
+                    proUsers.delete(userId);
+                    console.log('User downgraded from Pro:', userId);
+                    break;
+                }
+            }
         }
     }
     
