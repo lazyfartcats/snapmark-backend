@@ -86,6 +86,29 @@ app.post('/create-checkout', async (req, res) => {
     }
 });
 
+// Create Stripe customer portal session
+app.post('/create-portal-session', async (req, res) => {
+    try {
+        const { userId } = req.body;
+        
+        if (!userId) {
+            return res.status(400).json({ error: 'User ID required' });
+        }
+        
+        // In production, you'd look up the customer ID from your database
+        // For now, we'll create a portal link that redirects to Stripe dashboard
+        const portalSession = await stripe.billingPortal.sessions.create({
+            return_url: `${process.env.FRONTEND_URL || 'https://snapmark-success.netlify.app'}?cancelled=true`,
+        });
+        
+        console.log('Portal session created for user:', userId);
+        res.json({ url: portalSession.url });
+    } catch (err) {
+        console.error('Portal error:', err);
+        res.status(500).json({ error: err.message });
+    }
+});
+
 // Stripe webhook - called when payment succeeds
 app.post('/webhook', express.raw({ type: 'application/json' }), (req, res) => {
     const sig = req.headers['stripe-signature'];
