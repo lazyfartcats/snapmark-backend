@@ -59,35 +59,30 @@ app.post('/create-checkout', async (req, res) => {
         
         console.log('Creating checkout for user:', userId);
         
-        const session = await stripe.checkout.sessions.create({
-            payment_method_types: ['card'],
-            mode: 'subscription',
-            line_items: [{
-                price_data: {
-                    currency: 'usd',
-                    product_data: {
-                        name: 'SnapMark Pro',
-                        description: 'Unlimited screenshots per day',
-                        images: []
-                    },
-                    unit_amount: 299, // $2.99 in cents
-                    recurring: {
-                        interval: 'month'
-                    }
-                },
-                quantity: 1
-            }],
-            client_reference_id: userId,
-            success_url: `https://snapmark.netlify.app/?success=true&userId=${userId}`,
-            cancel_url: `${process.env.FRONTEND_URL || 'https://snapmark-success.netlify.app'}?cancelled=true`
-        });
-        
-        console.log('Checkout session created:', session.id);
-        res.json({ url: session.url });
-    } catch (err) {
-        console.error('Checkout error:', err);
-        res.status(500).json({ error: err.message });
-    }
+const session = await stripe.checkout.sessions.create({
+    payment_method_types: ['card'],
+    mode: 'subscription',
+    customer_email: `${userId}@snapmark.temp`, // Temporary email
+    line_items: [{
+        price_data: {
+            currency: 'usd',
+            product_data: {
+                name: 'SnapMark Pro',
+                description: 'Unlimited screenshots per day',
+            },
+            unit_amount: 299, // $2.99
+            recurring: {
+                interval: 'month'
+            }
+        },
+        quantity: 1
+    }],
+    metadata: {
+        userId: userId
+    },
+    client_reference_id: userId,
+    success_url: `${process.env.FRONTEND_URL || 'https://snapmark-success.netlify.app'}?success=true&userId=${userId}`,
+    cancel_url: `${process.env.FRONTEND_URL || 'https://snapmark-success.netlify.app'}?cancelled=true`
 });
 
 // Create Stripe customer portal session
@@ -99,13 +94,20 @@ app.post('/create-portal-session', async (req, res) => {
             return res.status(400).json({ error: 'User ID required' });
         }
         
-        // Get customer ID for this user
-        const customerId = global.customerMap.get(userId);
+        console.log('Looking for customer with userId:', userId);
         
-        if (!customerId) {
-            return res.status(404).json({ error: 'No active subscription found' });
+        // Search for customer by metadata
+        const customers = await stripe.customers.search({
+            query: `metadata['userId']:'${userId}'`,
+        });
+        
+        console.log('Found customers:', customers.data.length);
+        
+        if (customers.data.length === 0) {
+            return res.status(404).json({ error: 'No active subscription found. Try upgrading again.' });
         }
         
+        const customerId = customers.data[0].id;
         console.log('Creating portal session for customer:', customerId);
         
         const session = await stripe.billingPortal.sessions.create({
