@@ -74,7 +74,7 @@ app.post('/create-checkout', async (req, res) => {
                 quantity: 1
             }],
             client_reference_id: userId,
-            success_url: `${process.env.FRONTEND_URL || 'https://snapmark-success.netlify.app'}?success=true&userId=${userId}`,
+            success_url: `https://snapmark.netlify.app?success=true&userId=${userId}`,
             cancel_url: `${process.env.FRONTEND_URL || 'https://snapmark-success.netlify.app'}?cancelled=true`
         });
         
