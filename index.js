@@ -1,8 +1,34 @@
-const { Resend } = require('resend');
-const resend = new Resend(process.env.RESEND_API_KEY);
-
 const express = require('express');
 const cors = require('cors');
+const { Resend } = require('resend');
+
+// Check Stripe key
+if (!process.env.STRIPE_SECRET_KEY) {
+    console.error('STRIPE_SECRET_KEY not found!');
+    process.exit(1);
+}
+
+console.log('Stripe key found:', process.env.STRIPE_SECRET_KEY.substring(0, 15) + '...');
+
+const stripe = require('stripe')(process.env.STRIPE_SECRET_KEY);
+const resend = new Resend(process.env.RESEND_API_KEY);
+
+const app = express();
+
+// Important: raw body for webhooks
+app.use((req, res, next) => {
+    if (req.originalUrl === '/webhook') {
+        next();
+    } else {
+        express.json()(req, res, next);
+    }
+});
+
+app.use(cors());
+
+// Simple in-memory store (upgradeable to database later)
+const proUsers = new Set();
+global.customerMap = new Map();
 
 // Send email notification
 async function sendNotification(subject, message) {
@@ -28,37 +54,6 @@ async function sendNotification(subject, message) {
         console.error('Email error:', err);
     }
 }
-
-// Simple in-memory store (upgradeable to database later)
-const proUsers = new Set();
-global.customerMap = new Map(); // userId -> Stripe customerId
-
-// Check if Stripe key exists
-if (!process.env.STRIPE_SECRET_KEY) {
-    console.error('STRIPE_SECRET_KEY not found!');
-    console.error('Available env vars:', Object.keys(process.env));
-    process.exit(1);
-}
-
-console.log('Stripe key found:', process.env.STRIPE_SECRET_KEY.substring(0, 15) + '...');
-
-const stripe = require('stripe')(process.env.STRIPE_SECRET_KEY);
-
-const app = express();
-
-// Important: raw body for webhooks
-app.use((req, res, next) => {
-    if (req.originalUrl === '/webhook') {
-        next();
-    } else {
-        express.json()(req, res, next);
-    }
-});
-
-app.use(cors());
-
-// Simple in-memory store (upgradeable to database later)
-const proUsers = new Set();
 
 // Test route
 app.get('/', (req, res) => {
@@ -87,66 +82,36 @@ app.post('/create-checkout', async (req, res) => {
         
         console.log('Creating checkout for user:', userId);
         
-const session = await stripe.checkout.sessions.create({
-    payment_method_types: ['card'],
-    mode: 'subscription',
-    customer_email: `${userId}@snapmark.temp`, // Temporary email
-    line_items: [{
-        price_data: {
-            currency: 'usd',
-            product_data: {
-                name: 'SnapMark Pro',
-                description: 'Unlimited screenshots per day',
+        const session = await stripe.checkout.sessions.create({
+            payment_method_types: ['card'],
+            mode: 'subscription',
+            customer_email: `${userId}@snapmark.temp`,
+            line_items: [{
+                price_data: {
+                    currency: 'usd',
+                    product_data: {
+                        name: 'SnapMark Pro',
+                        description: 'Unlimited screenshots per day',
+                    },
+                    unit_amount: 299, // $2.99 in cents
+                    recurring: {
+                        interval: 'month'
+                    }
+                },
+                quantity: 1
+            }],
+            metadata: {
+                userId: userId
             },
-            unit_amount: 299, // $2.99
-            recurring: {
-                interval: 'month'
-            }
-        },
-        quantity: 1
-    }],
-    metadata: {
-        userId: userId
-    },
-    client_reference_id: userId,
-    success_url: `${process.env.FRONTEND_URL || 'https://snapmark-success.netlify.app'}?success=true&userId=${userId}`,
-    cancel_url: `${process.env.FRONTEND_URL || 'https://snapmark-success.netlify.app'}?cancelled=true`
-});
-
-// Create Stripe customer portal session
-app.post('/create-portal-session', async (req, res) => {
-    try {
-        const { userId } = req.body;
-        
-        if (!userId) {
-            return res.status(400).json({ error: 'User ID required' });
-        }
-        
-        console.log('Looking for customer with userId:', userId);
-        
-        // Search for customer by metadata
-        const customers = await stripe.customers.search({
-            query: `metadata['userId']:'${userId}'`,
+            client_reference_id: userId,
+            success_url: `${process.env.FRONTEND_URL || 'https://snapmark-success.netlify.app'}?success=true&userId=${userId}`,
+            cancel_url: `${process.env.FRONTEND_URL || 'https://snapmark-success.netlify.app'}?cancelled=true`
         });
         
-        console.log('Found customers:', customers.data.length);
-        
-        if (customers.data.length === 0) {
-            return res.status(404).json({ error: 'No active subscription found. Try upgrading again.' });
-        }
-        
-        const customerId = customers.data[0].id;
-        console.log('Creating portal session for customer:', customerId);
-        
-        const session = await stripe.billingPortal.sessions.create({
-            customer: customerId,
-            return_url: `${process.env.FRONTEND_URL || 'https://snapmark-success.netlify.app'}?portal=closed`,
-        });
-        
-        console.log('Portal session created:', session.id);
+        console.log('Checkout session created:', session.id);
         res.json({ url: session.url });
     } catch (err) {
-        console.error('Portal error:', err);
+        console.error('Checkout error:', err);
         res.status(500).json({ error: err.message });
     }
 });
@@ -169,31 +134,50 @@ app.post('/webhook', express.raw({ type: 'application/json' }), async (req, res)
     
     console.log('Webhook event:', event.type);
     
-// Payment succeeded - upgrade user to Pro and save customer ID
-if (event.type === 'checkout.session.completed') {
-    const session = event.data.object;
-    const userId = session.client_reference_id;
-    const customerId = session.customer;
-    const amount = session.amount_total / 100;
-    
-    if (userId && customerId) {
-        proUsers.add(userId);
-        if (!global.customerMap) global.customerMap = new Map();
-        global.customerMap.set(userId, customerId);
+    // Payment succeeded - upgrade user to Pro and save customer ID
+    if (event.type === 'checkout.session.completed') {
+        const session = event.data.object;
+        const userId = session.client_reference_id;
+        const customerId = session.customer;
+        const amount = session.amount_total / 100;
         
-        console.log('User upgraded to Pro:', userId);
-        
-        // Send notification
-        await sendNotification(
-            '💰 New SnapMark Pro Subscription!',
-            `<strong>User ID:</strong> ${userId}<br>
-             <strong>Customer ID:</strong> ${customerId}<br>
-             <strong>Amount:</strong> $${amount}<br>
-             <strong>Time:</strong> ${new Date().toLocaleString()}`
-        );
+        if (userId && customerId) {
+            proUsers.add(userId);
+            global.customerMap.set(userId, customerId);
+            
+            console.log('User upgraded to Pro:', userId);
+            console.log('Customer ID saved:', customerId);
+            
+            // Send notification
+            await sendNotification(
+                '💰 New SnapMark Pro Subscription!',
+                `<strong>User ID:</strong> ${userId}<br>
+                 <strong>Customer ID:</strong> ${customerId}<br>
+                 <strong>Amount:</strong> $${amount}<br>
+                 <strong>Time:</strong> ${new Date().toLocaleString()}`
+            );
+        }
     }
-}}
-    // Manual cancellation
+    
+    // Subscription cancelled - downgrade user
+    if (event.type === 'customer.subscription.deleted') {
+        const subscription = event.data.object;
+        const customerId = subscription.customer;
+        
+        // Find userId by customerId
+        for (let [userId, cId] of global.customerMap.entries()) {
+            if (cId === customerId) {
+                proUsers.delete(userId);
+                console.log('User downgraded from Pro:', userId);
+                break;
+            }
+        }
+    }
+    
+    res.json({ received: true });
+});
+
+// Cancel subscription
 app.post('/cancel-subscription', async (req, res) => {
     try {
         const { userId } = req.body;
@@ -213,37 +197,81 @@ app.post('/cancel-subscription', async (req, res) => {
         res.status(500).json({ error: err.message });
     }
 });
-```
-    // Subscription cancelled - downgrade user
-    if (event.type === 'customer.subscription.deleted') {
-        const subscription = event.data.object;
-        const customerId = subscription.customer;
-        
-        // Find userId by customerId
-        if (global.customerMap) {
-            for (let [userId, cId] of global.customerMap.entries()) {
-                if (cId === customerId) {
-                    proUsers.delete(userId);
-                    console.log('User downgraded from Pro:', userId);
-                    break;
-                }
-            }
-        }
-    }
-    
-    res.json({ received: true });
-});
 
-// Cancel subscription
-app.post('/cancel-subscription', async (req, res) => {
+// Create Stripe customer portal session
+app.post('/create-portal-session', async (req, res) => {
     try {
         const { userId } = req.body;
         
-        proUsers.delete(userId);
-        console.log('Subscription cancelled for:', userId);
+        if (!userId) {
+            return res.status(400).json({ error: 'User ID required' });
+        }
         
-        res.json({ success: true });
+        console.log('===== PORTAL SESSION REQUEST =====');
+        console.log('Looking for customer with userId:', userId);
+        
+        // Try method 1: Search by metadata
+        try {
+            const customers = await stripe.customers.search({
+                query: `metadata['userId']:'${userId}'`,
+            });
+            
+            console.log('Search by metadata found:', customers.data.length, 'customers');
+            
+            if (customers.data.length > 0) {
+                const customerId = customers.data[0].id;
+                console.log('Using customer ID:', customerId);
+                
+                const session = await stripe.billingPortal.sessions.create({
+                    customer: customerId,
+                    return_url: `${process.env.FRONTEND_URL || 'https://snapmark-success.netlify.app'}?portal=closed`,
+                });
+                
+                console.log('Portal session created successfully');
+                return res.json({ url: session.url });
+            }
+        } catch (searchErr) {
+            console.error('Search error:', searchErr);
+        }
+        
+        // Try method 2: Check in-memory map
+        console.log('Trying in-memory customerMap...');
+        const customerId = global.customerMap?.get(userId);
+        console.log('In-memory customer ID:', customerId);
+        
+        if (customerId) {
+            const session = await stripe.billingPortal.sessions.create({
+                customer: customerId,
+                return_url: `${process.env.FRONTEND_URL || 'https://snapmark-success.netlify.app'}?portal=closed`,
+            });
+            
+            console.log('Portal session created from memory');
+            return res.json({ url: session.url });
+        }
+        
+        // Try method 3: List all customers with this email
+        console.log('Trying email search...');
+        const customerList = await stripe.customers.list({
+            email: `${userId}@snapmark.temp`,
+            limit: 1
+        });
+        
+        console.log('Email search found:', customerList.data.length);
+        
+        if (customerList.data.length > 0) {
+            const session = await stripe.billingPortal.sessions.create({
+                customer: customerList.data[0].id,
+                return_url: `${process.env.FRONTEND_URL || 'https://snapmark-success.netlify.app'}?portal=closed`,
+            });
+            
+            return res.json({ url: session.url });
+        }
+        
+        console.log('No customer found by any method');
+        return res.status(404).json({ error: 'No active subscription found. Please contact support or subscribe again.' });
+        
     } catch (err) {
+        console.error('Portal error:', err);
         res.status(500).json({ error: err.message });
     }
 });
@@ -252,4 +280,5 @@ const PORT = process.env.PORT || 3001;
 app.listen(PORT, '0.0.0.0', () => {
     console.log('SnapMark Payment Backend running on port', PORT);
     console.log('Server is ready to accept connections');
+    console.log('Pro users in memory:', proUsers.size);
 });
