@@ -249,7 +249,7 @@ app.post('/cancel-subscription', async (req, res) => {
 });
 
 const PORT = process.env.PORT || 3001;
-app.listen(PORT, () => {
+app.listen(PORT, '0.0.0.0', () => {
     console.log('SnapMark Payment Backend running on port', PORT);
-    console.log('Pro users in memory:', proUsers.size);
+    console.log('Server is ready to accept connections');
 });
