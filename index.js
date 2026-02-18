@@ -99,14 +99,22 @@ app.post('/create-portal-session', async (req, res) => {
             return res.status(400).json({ error: 'User ID required' });
         }
         
-        // In production, you'd look up the customer ID from your database
-        // For now, we'll create a portal link that redirects to Stripe dashboard
-        const portalSession = await stripe.billingPortal.sessions.create({
-            return_url: `${process.env.FRONTEND_URL || 'https://snapmark-success.netlify.app'}?cancelled=true`,
+        // Get customer ID for this user
+        const customerId = global.customerMap.get(userId);
+        
+        if (!customerId) {
+            return res.status(404).json({ error: 'No active subscription found' });
+        }
+        
+        console.log('Creating portal session for customer:', customerId);
+        
+        const session = await stripe.billingPortal.sessions.create({
+            customer: customerId,
+            return_url: `${process.env.FRONTEND_URL || 'https://snapmark-success.netlify.app'}?portal=closed`,
         });
         
-        console.log('Portal session created for user:', userId);
-        res.json({ url: portalSession.url });
+        console.log('Portal session created:', session.id);
+        res.json({ url: session.url });
     } catch (err) {
         console.error('Portal error:', err);
         res.status(500).json({ error: err.message });
