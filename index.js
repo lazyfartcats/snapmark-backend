@@ -169,22 +169,30 @@ app.post('/webhook', express.raw({ type: 'application/json' }), async (req, res)
     
     console.log('Webhook event:', event.type);
     
-    // Payment succeeded - upgrade user to Pro and save customer ID
-    if (event.type === 'checkout.session.completed') {
-        const session = event.data.object;
-        const userId = session.client_reference_id;
-        const customerId = session.customer;
+// Payment succeeded - upgrade user to Pro and save customer ID
+if (event.type === 'checkout.session.completed') {
+    const session = event.data.object;
+    const userId = session.client_reference_id;
+    const customerId = session.customer;
+    const amount = session.amount_total / 100;
+    
+    if (userId && customerId) {
+        proUsers.add(userId);
+        if (!global.customerMap) global.customerMap = new Map();
+        global.customerMap.set(userId, customerId);
         
-        if (userId && customerId) {
-            proUsers.add(userId);
-            // Store mapping of userId to customerId
-            if (!global.customerMap) global.customerMap = new Map();
-            global.customerMap.set(userId, customerId);
-            
-            console.log('User upgraded to Pro:', userId);
-            console.log('Customer ID saved:', customerId);
-        }
+        console.log('User upgraded to Pro:', userId);
+        
+        // Send notification
+        await sendNotification(
+            '💰 New SnapMark Pro Subscription!',
+            `<strong>User ID:</strong> ${userId}<br>
+             <strong>Customer ID:</strong> ${customerId}<br>
+             <strong>Amount:</strong> $${amount}<br>
+             <strong>Time:</strong> ${new Date().toLocaleString()}`
+        );
     }
+}}
     
     // Subscription cancelled - downgrade user
     if (event.type === 'customer.subscription.deleted') {
