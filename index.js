@@ -1,5 +1,33 @@
+const { Resend } = require('resend');
+const resend = new Resend(process.env.RESEND_API_KEY);
+
 const express = require('express');
 const cors = require('cors');
+
+// Send email notification
+async function sendNotification(subject, message) {
+    if (!process.env.RESEND_API_KEY || !process.env.ADMIN_EMAIL) {
+        console.log('Email not configured, skipping notification');
+        return;
+    }
+    
+    try {
+        await resend.emails.send({
+            from: 'SnapMark <onboarding@resend.dev>',
+            to: process.env.ADMIN_EMAIL,
+            subject: subject,
+            html: `
+                <h2>${subject}</h2>
+                <p>${message}</p>
+                <hr>
+                <small>SnapMark Backend Notification</small>
+            `
+        });
+        console.log('Email notification sent');
+    } catch (err) {
+        console.error('Email error:', err);
+    }
+}
 
 // Simple in-memory store (upgradeable to database later)
 const proUsers = new Set();
