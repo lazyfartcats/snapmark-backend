@@ -193,7 +193,27 @@ if (event.type === 'checkout.session.completed') {
         );
     }
 }}
-    
+    // Manual cancellation
+app.post('/cancel-subscription', async (req, res) => {
+    try {
+        const { userId } = req.body;
+        
+        proUsers.delete(userId);
+        console.log('Subscription cancelled for:', userId);
+        
+        // Send notification
+        await sendNotification(
+            '❌ SnapMark Subscription Cancelled',
+            `<strong>User ID:</strong> ${userId}<br>
+             <strong>Time:</strong> ${new Date().toLocaleString()}`
+        );
+        
+        res.json({ success: true });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+```
     // Subscription cancelled - downgrade user
     if (event.type === 'customer.subscription.deleted') {
         const subscription = event.data.object;
