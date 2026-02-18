@@ -1,6 +1,10 @@
 const express = require('express');
 const cors = require('cors');
 
+// Simple in-memory store (upgradeable to database later)
+const proUsers = new Set();
+global.customerMap = new Map(); // userId -> Stripe customerId
+
 // Check if Stripe key exists
 if (!process.env.STRIPE_SECRET_KEY) {
     console.error('STRIPE_SECRET_KEY not found!');
